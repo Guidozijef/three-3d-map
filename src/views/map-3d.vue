@@ -410,4 +410,27 @@ function animate() {
   window.requestAnimationFrame(animate);
   renderMap();
 }
+
+// 创建 Raycaster 和鼠标向量
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+// 监听鼠标点击事件
+window.addEventListener("click", (event) => {
+  // 计算鼠标位置的标准化设备坐标（-1 到 1）
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // 更新射线
+  raycaster.setFromCamera(mouse, camera);
+
+  // 检测射线与物体的交集
+  const intersects = raycaster.intersectObjects(scene.children, true); // 检测与精灵的交集
+
+  // 如果有交集，输出交集物体的信息
+  if (intersects.length > 0) {
+    const clickedObject = intersects[0].object;
+    console.log("点击了点位:", clickedObject);
+    alert("你点击了一个点位！");
+  }
+});
 </script>
