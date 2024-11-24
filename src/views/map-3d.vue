@@ -165,7 +165,7 @@ function initLightPoint(properties, depth) {
   // 随机创建光柱高度
   let heightScaleFactor = 2 + random(1, 5) / 5;
   // 创建光柱
-  const light = createLightPillar(x, y, heightScaleFactor * 0.01, depth);
+  const light = createLightPillar(x, y, heightScaleFactor * 0.05, depth);
   // 创建文字标注
   const label = createTextPoint(x, y, name, depth);
 
@@ -189,7 +189,7 @@ function createLightPillar(x, y, height = 1, depth) {
   geometry.rotateX(Math.PI / 2);
   // 柱子材质
   const material = new THREE.MeshBasicMaterial({
-    // map: textureLoader.load(require("./mapimg/光柱.png")),
+    map: textureLoader.load("./img/光柱.png"),
     color: 0x00ffff,
     transparent: true,
     depthWrite: false,
@@ -225,8 +225,8 @@ function createPointMesh(size) {
   // 标记点：几何体，材质，
   const geometry = new THREE.PlaneGeometry(0.05, 0.05);
   const material = new THREE.MeshBasicMaterial({
-    // map: textureLoader.load(require("./mapimg/标注.png")),
-    color: 0x000000,
+    map: textureLoader.load("./img/标注.png"),
+    color: 0x00ffff,
     side: THREE.DoubleSide,
     transparent: true,
     depthWrite: false, //禁止写入深度缓冲区数据
@@ -248,9 +248,9 @@ function createPointMesh(size) {
  */
 function createLightHalo(size) {
   // 标记点：几何体，材质，
-  const geometry = new THREE.PlaneGeometry(1, 1);
+  const geometry = new THREE.PlaneGeometry(0.3, 0.3);
   const material = new THREE.MeshBasicMaterial({
-    // map: textureLoader.load(require("./mapimg/标注光圈.png")),
+    map: textureLoader.load("./img/标注光圈.png"),
     color: 0x00ffff,
     side: THREE.DoubleSide,
     opacity: 0,
@@ -262,7 +262,7 @@ function createLightHalo(size) {
   mesh.name = "createLightHalo";
   //mesh.rotation.x = Math.PI / 2;
   // 缩放
-  const scale = 1.5 * size;
+  const scale = 0.3 * size;
   mesh.size = scale; // 自定义一个属性，表示mesh静态大小
   mesh.scale.set(scale, scale, scale);
   return mesh;
@@ -388,7 +388,7 @@ function random(min, max) {
   return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
-// animate();
+animate();
 
 function animate() {
   // 圆柱底部 波纹
