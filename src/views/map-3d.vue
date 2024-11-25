@@ -21,6 +21,7 @@ const centerPos = [104.25494, 30.883438]; // 地图中心经纬度坐标centerPo
 
 const WaveMeshArr = []; // 波纹数组
 const particleArr = []; // 飞升粒子集合
+let mapModel = null; // 地图模型
 
 let rotatingApertureMesh = null; //底部旋转的光圈
 let rotatingPointMesh = null; //底部旋转的点
@@ -138,7 +139,7 @@ function renderMap() {
 //绘制地图
 function generateGeometry() {
   // 初始化一个地图对象
-  const map = new THREE.Group();
+  mapModel = new THREE.Group();
   projection.center(centerPos).scale(200).translate([0, 0]);
   // const url = "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=510113"; //成都市青白江区
   const url = "/data/510113.geojson";
@@ -169,16 +170,16 @@ function generateGeometry() {
             province.add(line);
           });
         });
-        map.add(province, light, label);
+        mapModel.add(province, light, label);
       });
-      map.scale.set(200, 200, 200);
+      mapModel.scale.set(200, 200, 200);
       initSceneBg();
-      initCirclePoint(map);
-      initRotatingAperture(map);
-      initRotatingPoint(map);
-      initParticle(map);
-      setCenter(map);
-      scene.add(map); //将地图对象添加到场景中
+      initCirclePoint(mapModel);
+      initRotatingAperture(mapModel);
+      initRotatingPoint(mapModel);
+      initParticle(mapModel);
+      setCenter(mapModel);
+      scene.add(mapModel); //将地图对象添加到场景中
       renderMap();
     });
 }
@@ -197,7 +198,7 @@ function initLightPoint(properties, depth) {
   // 随机创建光柱高度
   let heightScaleFactor = 2 + random(1, 5) / 5;
   // 创建光柱
-  const light = createLightPillar(x, y, heightScaleFactor * 0.1, depth);
+  const light = createLightPillar(x, y, heightScaleFactor * 0.07, depth);
   // 创建文字标注
   const label = createTextPoint(x, y, name, depth);
 
@@ -219,6 +220,8 @@ function createLightPillar(x, y, height = 1, depth) {
 
   // 柱体旋转90度，垂直于Y轴
   geometry.rotateX(Math.PI / 2);
+  // 柱体的z轴移动高度一半对齐中心点
+  geometry.translate(0, 0, height / 2);
   // 柱子材质
   const material = new THREE.MeshBasicMaterial({
     map: textureLoader.load("./img/光柱.png"),
@@ -536,7 +539,7 @@ function getBoundingBox(model) {
 }
 
 function random(min, max) {
-  return Math.random() * (max - min) + min;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 /**
@@ -560,11 +563,11 @@ function initParticle(map) {
   // 构建范围，中间地图的2倍
   let minX = center.x - size.x;
   let maxX = center.x + size.x;
-  let minY = center.y - size.y;
-  let maxY = center.y + size.y;
+  let minY = center.y - size.y / 2;
+  let maxY = center.y + size.y / 2;
   let minZ = -16;
-  let maxZ = 16;
-  for (let i = 0; i < 16; i++) {
+  let maxZ = 6;
+  for (let i = 0; i < 12; i++) {
     const particle = createSequenceFrame({
       image: "./img/上升粒子1.png",
       width: 180,
@@ -574,8 +577,8 @@ function initParticle(map) {
       row: 1,
       speed: 0.5, // 飞升速度
     });
-    let particleScale = random(0.1, 0.5);
-    particle.scale.set(particleScale, particleScale, particleScale);
+    let particleScale = random(1, 3);
+    particle.scale.set(particleScale * 0.1, particleScale * 0.1, particleScale * 0.1);
     particle.rotation.x = Math.PI / 2;
     let x = random(minX, maxX);
     let y = random(minY, maxY);
@@ -603,6 +606,7 @@ function createSequenceFrame(options) {
   let c = 0; // 当前列
   let t = 0; // 时间
   mesh.updateSequenceFrame = (time) => {
+    // 这个动画只控制数字的变化
     t += options.speed;
     if (t > options.frame) t = 0;
     c = options.column - Math.floor(t % options.column) - 1;
@@ -653,9 +657,20 @@ function loop() {
   if (particleArr.length) {
     for (let i = 0; i < particleArr.length; i++) {
       particleArr[i].updateSequenceFrame();
-      particleArr[i].position.z += 0.5;
-      if (particleArr[i].position.z >= 16) {
-        particleArr[i].position.z = -16;
+      particleArr[i].position.z += 0.3;
+      if (particleArr[i].position.z >= 100) {
+        const { size, center } = getBoundingBox(mapModel);
+        // 构建范围，中间地图的2倍
+        let minX = center.x - size.x;
+        let maxX = center.x + size.x;
+        let minY = center.y - size.y / 2;
+        let maxY = center.y + size.y / 2;
+        let x = random(minX, maxX);
+        let y = random(minY, maxY);
+        let z = random(-16, 6);
+        particleArr[i].position.x = x;
+        particleArr[i].position.y = y;
+        particleArr[i].position.z = z;
       }
     }
   }
