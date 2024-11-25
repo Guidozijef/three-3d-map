@@ -484,6 +484,25 @@ function initRotatingPoint(map) {
   rotatingPointMesh = mesh;
 }
 
+initPoints();
+
+// 初始化旋转点
+function initPoints() {
+  let plane = new THREE.PlaneGeometry(34, 46);
+  plane.rotateX(Math.PI / 2);
+  plane.translate(0, 0, 46 / 2);
+  let material = new THREE.MeshBasicMaterial({
+    map: textureLoader.load("./img/rqbj.png"),
+    transparent: true,
+    opacity: 1,
+    depthTest: true,
+  });
+  let mesh = new THREE.Mesh(plane, material);
+  mesh.position.set(...projection(centerPos), 10);
+  mesh.scale.set(0.1, 0.1, 0.1);
+  scene.add(mesh);
+}
+
 // 初始化场景背景原点图
 function initCirclePoint(map) {
   const { size } = getBoundingBox(map);
