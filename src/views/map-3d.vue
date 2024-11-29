@@ -1,11 +1,15 @@
 <template>
-  <main>
+  <main style="position: relative">
     <div class="box-3d" id="webgl"></div>
+    <div v-show="visible" class="tooltip" ref="tipRef" id="tooltip">
+      <span @click="closeTip" class="close">×</span>
+      <p></p>
+    </div>
   </main>
 </template>
 
 <script setup>
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import * as THREE from "three";
 import * as d3 from "d3";
 // 引入轨道控制器扩展库OrbitControls.js
@@ -22,6 +26,7 @@ const centerPos = [104.25494, 30.883438]; // 地图中心经纬度坐标centerPo
 const WaveMeshArr = []; // 波纹数组
 const particleArr = []; // 飞升粒子集合
 let mapModel = null; // 地图模型
+const pointInstanceArr = [];
 
 let rotatingApertureMesh = null; //底部旋转的光圈
 let rotatingPointMesh = null; //底部旋转的点
@@ -43,7 +48,7 @@ const camera = new THREE.PerspectiveCamera(45, width / height, 1, 10000);
 // camera.up.set(0, 0, 1); // 相机以那个轴向上
 camera.position.set(-1.62, -218.38, 232.62);
 
-// camera.lookAt([...projection(centerPos), 0]); // 指向mesh对应的位置
+camera.lookAt([...projection(centerPos), 0]); // 指向mesh对应的位置
 
 // 创建渲染器对象
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -91,15 +96,11 @@ controls.enableDamping = true; //阻尼感关
 controls.addEventListener("change", function () {
   renderMap();
   // 浏览器控制台查看相机位置变化
-  console.log("camera.position", camera.position);
+  // console.log("camera.position", camera.position);
 }); //监听鼠标、键盘事件
 
-const helper = new THREE.CameraHelper(camera);
-scene.add(helper);
-
-// 添加坐标系 (长度为5)
-const axesHelper = new THREE.AxesHelper(500);
-scene.add(axesHelper); // 红色为 X 轴，绿色为 Y 轴，蓝色为 Z 轴
+// 创建辅助相机和坐标系
+// initCameraHelper();
 
 // 创建地图外观材质
 initMapMaterial();
@@ -140,8 +141,10 @@ function renderMap() {
 function generateGeometry() {
   // 初始化一个地图对象
   mapModel = new THREE.Group();
+  // TODO: 将centerPos转换为投影坐标并设置地图中心点
   projection.center(centerPos).scale(200).translate([0, 0]);
   // const url = "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=510113"; //成都市青白江区
+  // const url = "https://geo.datav.aliyun.com/areas_v3/bound/510100_full.json"; //成都市
   const url = "/data/510113.geojson";
 
   fetch(url)
@@ -158,6 +161,7 @@ function generateGeometry() {
         //这里创建光柱、文字坐标
         properties.center = d3.geoCentroid(geometry);
         const [light, label] = initLightPoint(properties, depth);
+
         // 循环坐标数组
         coordinates.forEach((coordinate) => {
           coordinate.forEach((polygon) => {
@@ -166,19 +170,22 @@ function generateGeometry() {
 
             // 创建地图区块边界线
             const line = createLine(polygon, depth);
+
             province.add(mesh);
             province.add(line);
           });
         });
         mapModel.add(province, light, label);
       });
+      initPoints();
+      // initBatchPoints();
       mapModel.scale.set(200, 200, 200);
       initSceneBg();
       initCirclePoint(mapModel);
       initRotatingAperture(mapModel);
       initRotatingPoint(mapModel);
       initParticle(mapModel);
-      setCenter(mapModel);
+      setMapCenter(mapModel);
       scene.add(mapModel); //将地图对象添加到场景中
       renderMap();
     });
@@ -187,7 +194,7 @@ function generateGeometry() {
 /**
  * @description 创建光柱、文字坐标
  * @param {*} properties 属性、详情
- * @param {Function} projection  d3-geo转化坐标
+ * @param {*} depth  高度
  */
 function initLightPoint(properties, depth) {
   const { name } = properties;
@@ -246,6 +253,7 @@ function createLightPillar(x, y, height = 1, depth) {
   const bottomMesh = createPointMesh(0.5);
   // 创建光圈
   const lightHalo = createLightHalo(0.5);
+
   WaveMeshArr.push(lightHalo);
   group.add(light01, light02, bottomMesh, lightHalo);
   group.position.set(x, -y, depth + 0.001);
@@ -329,7 +337,7 @@ function createTextPoint(x, y, areaName, depth) {
 
 function initMapMaterial() {
   // 创建环境贴图
-  textureMap = textureLoader.load("./img/gz-map.jpg");
+  textureMap = textureLoader.load("./img/gz-map1.png");
   texturefxMap = textureLoader.load("./img/gz-map-fx.jpg");
   textureMap.wrapS = THREE.RepeatWrapping; //纹理水平方向的平铺方式
   textureMap.wrapT = THREE.RepeatWrapping; //纹理垂直方向的平铺方式
@@ -339,10 +347,10 @@ function initMapMaterial() {
   textureMap.repeat.set(scale, scale); // 调整X方向和Y方向的重复次数
   texturefxMap.repeat.set(scale, scale);
   textureMap.offset.set(0.9, 0.9); //offset贴图单次重复中的起始偏移量
-  texturefxMap.offset.set(0.9, 0.9);
+  texturefxMap.offset.set(0, 0);
 
   // 创建高光材质
-  material = new THREE.MeshStandardMaterial({
+  material = new THREE.MeshLambertMaterial({
     map: textureMap, //颜色贴图
     color: 0xb4eeea,
     emissive: 0x330000, // 设置自发光颜色
@@ -351,8 +359,6 @@ function initMapMaterial() {
     transparent: true,
     opacity: 1,
     emissiveIntensity: 0.1, // 自发光强度
-    metalness: 0.2, // 金属感（0~1）
-    roughness: 0.3, // 表面粗糙度（0~1）
   });
 
   // 创建基础网格材质  侧面贴图
@@ -429,7 +435,7 @@ function initGui() {
 function createLine(data, depth) {
   // 线材质对象 创建地图边界线 白色
   const lineMaterial = new THREE.LineBasicMaterial({
-    color: "#ffffff",
+    color: "#ceebf7",
   });
   // 创建一个空的几何体对象
   const lineGeometry = new THREE.BufferGeometry();
@@ -446,6 +452,41 @@ function createLine(data, depth) {
   const line = new THREE.Line(lineGeometry, lineMaterial);
   line.position.z += depth + 0.001;
   return line;
+}
+
+// 初始化场景背景原点图
+function initCirclePoint(map) {
+  const { size } = getBoundingBox(map);
+  let width = size.x < size.y ? size.y + 1 : size.x + 1;
+  let plane = new THREE.PlaneGeometry(width, width);
+  let material = new THREE.MeshPhongMaterial({
+    color: 0x00ffff,
+    map: textureLoader.load("./img/circle-point.png"),
+    transparent: true,
+    opacity: 1,
+    // depthTest: false,
+  });
+  let mesh = new THREE.Mesh(plane, material);
+  mesh.position.set(...projection(centerPos), -0.3);
+  scene.add(mesh);
+}
+
+// 初始化背景
+function initSceneBg() {
+  let plane = new THREE.PlaneGeometry(width, height);
+  let material = new THREE.MeshPhongMaterial({
+    // color: 0x061920,
+    color: 0xffffff,
+    map: textureLoader.load("./img/scene-bg2.png"),
+    transparent: true,
+    opacity: 1,
+    depthTest: true,
+  });
+
+  let mesh = new THREE.Mesh(plane, material);
+  mesh.scale.set(0.6, 0.6, 0.6);
+  mesh.position.set(...projection(centerPos), -0.4);
+  scene.add(mesh);
 }
 
 // 初始化旋转光圈
@@ -484,62 +525,69 @@ function initRotatingPoint(map) {
   rotatingPointMesh = mesh;
 }
 
-initPoints();
-
-// 初始化旋转点
+// 撒点
 function initPoints() {
-  let plane = new THREE.PlaneGeometry(34, 46);
-  plane.rotateX(Math.PI / 2);
-  plane.translate(0, 0, 46 / 2);
-  let material = new THREE.MeshBasicMaterial({
-    map: textureLoader.load("./img/rqbj.png"),
-    transparent: true,
-    opacity: 1,
-    depthTest: true,
+  const group = new THREE.Group();
+  const iconTexture = textureLoader.load("./img/point.png");
+  const material = new THREE.SpriteMaterial({
+    map: iconTexture,
+    sizeAttenuation: true, // 根据距离调整大小
+    transparent: true, // 使纹理透明
+    opacity: 1, // 图标的透明度
+    depthTest: false, // 关闭深度监测
   });
-  let mesh = new THREE.Mesh(plane, material);
-  mesh.position.set(...projection(centerPos), 10);
-  mesh.scale.set(0.1, 0.1, 0.1);
-  scene.add(mesh);
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(0.05, 0.05, 1);
+  const { center } = getBoundingBox(mapModel);
+
+  sprite.position.set(center.x, center.y, 0.06);
+  sprite.properties = { name: "这是一个测试点位", info: { a: "在来点值" } };
+  pointInstanceArr.push(sprite);
+  group.add(sprite);
+  group.renderOrder = 99; // 设置为一个比默认值更大的值
+  mapModel.add(group);
 }
 
-// 初始化场景背景原点图
-function initCirclePoint(map) {
-  const { size } = getBoundingBox(map);
-  let width = size.x < size.y ? size.y + 1 : size.x + 1;
-  let plane = new THREE.PlaneGeometry(width, width);
-  let material = new THREE.MeshPhongMaterial({
-    color: 0x00ffff,
-    map: textureLoader.load("./img/circle-point.png"),
-    transparent: true,
-    opacity: 1,
-    // depthTest: false,
-  });
-  let mesh = new THREE.Mesh(plane, material);
-  mesh.position.set(...projection(centerPos), -0.3);
-  scene.add(mesh);
-}
-
-// 初始化背景
-function initSceneBg() {
-  let plane = new THREE.PlaneGeometry(width, height);
-  let material = new THREE.MeshPhongMaterial({
-    // color: 0x061920,
-    color: 0xffffff,
-    map: textureLoader.load("./img/scene-bg2.png"),
-    transparent: true,
-    opacity: 1,
+// 批量撒点
+function initBatchPoints() {
+  const group = new THREE.Group();
+  const iconTexture = textureLoader.load("./img/point.png");
+  const material = new THREE.SpriteMaterial({
+    map: iconTexture,
+    sizeAttenuation: true, // 根据距离调整大小
+    transparent: true, // 使纹理透明
+    opacity: 1, // 图标的透明度
     depthTest: true,
+    depthWrite: false,
+  });
+  const geometry = new THREE.BufferGeometry();
+  const vertices = [];
+  const { center } = getBoundingBox(mapModel); // 根据地图位置设置
+  for (let i = 0; i < 100000; i++) {
+    vertices.push(Math.random(), Math.random(), 0.055); // 随机位置
+  }
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  const material1 = new THREE.PointsMaterial({
+    size: 5, // 点的大小
+    map: iconTexture, // 使用共享的纹理
+    transparent: true,
+    sizeAttenuation: true, // 根据距离调整大小
+    opacity: 1, // 图标的透明度
+    depthTest: false, // 关闭深度监测
+    // alphaTest: 0.01, // 设定透明度阈值
   });
 
-  let mesh = new THREE.Mesh(plane, material);
-  mesh.scale.set(0.6, 0.6, 0.6);
-  mesh.position.set(...projection(centerPos), -0.4);
-  scene.add(mesh);
+  const points = new THREE.Points(geometry, material1);
+
+  group.add(points);
+  group.position.x -= 0.5;
+  group.position.y -= 0.5;
+  group.renderOrder = 99; // 设置为一个比默认值更大的值
+  mapModel.add(group);
 }
 
 // 设置地图中心位置
-function setCenter(map) {
+function setMapCenter(map) {
   const { center } = getBoundingBox(map);
   const offset = [0, 0];
 
@@ -547,6 +595,7 @@ function setCenter(map) {
   map.position.y = map.position.y - center.y - offset[1];
 }
 
+// 计算模型盒子大小
 function getBoundingBox(model) {
   const box = new THREE.Box3().setFromObject(model);
   const center = box.getCenter(new THREE.Vector3());
@@ -555,6 +604,15 @@ function getBoundingBox(model) {
     center,
     size,
   };
+}
+
+function initCameraHelper() {
+  const helper = new THREE.CameraHelper(camera);
+  scene.add(helper);
+
+  // 添加坐标系 (长度为5)
+  const axesHelper = new THREE.AxesHelper(500);
+  scene.add(axesHelper); // 红色为 X 轴，绿色为 Y 轴，蓝色为 Z 轴
 }
 
 function random(min, max) {
@@ -570,13 +628,14 @@ function removeObject(object) {
     object.map((item) => {
       item.geometry.dispose();
     });
-    this.scene.remove(...object);
+    scene.remove(...object);
   } else {
     object.geometry.dispose();
-    this.scene.remove(object);
+    scene.remove(object);
   }
 }
 
+// 创建上升粒子
 function initParticle(map) {
   const { size, center } = getBoundingBox(map);
   // 构建范围，中间地图的2倍
@@ -694,6 +753,19 @@ function loop() {
     }
   }
 }
+const visible = ref(false);
+const tipRef = ref(null);
+
+function setDialog(flag, { top, left }, name) {
+  visible.value = flag;
+  tipRef.value.style.top = `${top}px`;
+  tipRef.value.style.left = `${left}px`;
+  tipRef.value.querySelector("p").innerHTML = name;
+}
+
+function closeTip() {
+  visible.value = false;
+}
 
 // 创建 Raycaster 和鼠标向量
 const raycaster = new THREE.Raycaster();
@@ -708,12 +780,39 @@ window.addEventListener("click", (event) => {
   raycaster.setFromCamera(mouse, camera);
 
   // 检测射线与物体的交集
-  const intersects = raycaster.intersectObjects(scene.children, true); // 检测与精灵的交集
+  const intersects = raycaster.intersectObjects(pointInstanceArr, true); // 检测与精灵的交集
 
   // 如果有交集，输出交集物体的信息
   if (intersects.length > 0) {
     const clickedObject = intersects[0].object;
     console.log("点击了点位:", clickedObject);
+    setDialog(true, { top: event.pageY, left: event.pageX }, clickedObject.properties.name);
   }
 });
 </script>
+
+<style>
+.tooltip {
+  width: 200px;
+  height: 300px;
+  position: absolute;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: 3px;
+  border: 1px solid #fff;
+  transition: opacity 0.3s;
+  top: 0;
+  z-index: 99;
+  padding: 20px;
+}
+
+.tooltip span {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+</style>
