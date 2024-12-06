@@ -11,6 +11,8 @@
 <script setup>
 import { onMounted, ref } from "vue";
 import * as THREE from "three";
+// 引入 MeshLine 库
+import { MeshLine, MeshLineMaterial } from "three.meshline";
 import * as d3 from "d3";
 // 引入轨道控制器扩展库OrbitControls.js
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -26,7 +28,8 @@ const centerPos = [104.25494, 30.883438]; // 地图中心经纬度坐标centerPo
 const WaveMeshArr = []; // 波纹数组
 const particleArr = []; // 飞升粒子集合
 let mapModel = null; // 地图模型
-const pointInstanceArr = [];
+const pointInstanceArr = []; // 点击点位监测集合
+const linePartList = []; // 飞线集合
 
 let rotatingApertureMesh = null; //底部旋转的光圈
 let rotatingPointMesh = null; //底部旋转的点
@@ -45,7 +48,7 @@ const height = window.innerHeight; //高度
 // 30:视场角度, width / height:Canvas画布宽高比, 1:近裁截面, 3000：远裁截面
 
 const camera = new THREE.PerspectiveCamera(45, width / height, 1, 10000);
-// camera.up.set(0, 0, 1); // 相机以那个轴向上
+camera.up.set(0, 0, 1); // 相机以那个轴向上
 camera.position.set(-1.62, -218.38, 232.62);
 
 camera.lookAt([...projection(centerPos), 0]); // 指向mesh对应的位置
@@ -87,8 +90,9 @@ scene.add(directionalLight2);
 // 设置相机控件轨道控制器OrbitControls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; //阻尼感关
-// controls.maxPolarAngle = 2.5;
-// controls.minPolarAngle = -2;
+controls.maxPolarAngle = Math.PI / 2;
+// controls.autoRotate = false;
+// controls.minPolarAngle = Math.PI / 2;
 // controls.maxAzimuthAngle = 1.5;
 // controls.minAzimuthAngle = -2;
 
@@ -146,6 +150,8 @@ function generateGeometry() {
   // const url = "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=510113"; //成都市青白江区
   // const url = "https://geo.datav.aliyun.com/areas_v3/bound/510100_full.json"; //成都市
   const url = "/data/510113.geojson";
+  // 拉伸 地图厚度
+  const depth = 0.05;
 
   fetch(url)
     .then((response) => response.json())
@@ -156,8 +162,7 @@ function generateGeometry() {
         const coordinates = geometry.coordinates;
         const province = new THREE.Object3D();
         province.name = properties.name;
-        // 拉伸 地图厚度
-        const depth = 0.05;
+
         //这里创建光柱、文字坐标
         properties.center = d3.geoCentroid(geometry);
         const [light, label] = initLightPoint(properties, depth);
@@ -179,13 +184,15 @@ function generateGeometry() {
       });
       initPoints();
       // initBatchPoints();
+      createFlylines(features, depth);
+      // TODO: 如果要加在地图模型上，必须在缩放之前添加进去
       mapModel.scale.set(200, 200, 200);
+      setMapCenter(mapModel);
       initSceneBg();
       initCirclePoint(mapModel);
       initRotatingAperture(mapModel);
       initRotatingPoint(mapModel);
       initParticle(mapModel);
-      setMapCenter(mapModel);
       scene.add(mapModel); //将地图对象添加到场景中
       renderMap();
     });
@@ -210,6 +217,76 @@ function initLightPoint(properties, depth) {
   const label = createTextPoint(x, y, name, depth);
 
   return [light, label];
+}
+
+/**
+ * 两点链接飞线
+ * */
+function createFlylines(features, depth) {
+  const group = new THREE.Group();
+  const { center } = getBoundingBox(mapModel);
+  features.forEach((feature, i) => {
+    const { properties, geometry } = feature;
+    properties.center = d3.geoCentroid(geometry);
+    const [x, y] = projection(properties.center);
+    const { line, linePart } = createFlyLine([center.x, center.y], [x, -y], depth, i);
+    linePart.renderOrder = 80;
+    line.add(linePart);
+    group.add(line);
+    linePartList.push(linePart);
+  });
+  mapModel.add(group);
+
+  function createFlyLine(posStart, posEnd, depth, i) {
+    // 根据目标坐标设置3D坐标  z轴位置在地图表面
+    const [x0, y0, z0] = [...posStart, depth];
+    const [x1, y1, z1] = [...posEnd, depth];
+    // 定义飞线的起点和终点
+    const startPoint = new THREE.Vector3(x0, y0, z0);
+    const endPoint = new THREE.Vector3(x1, y1, z1);
+    const centerPoint = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, z1 + 0.1);
+
+    // 创建 CatmullRomCurve3 曲线，包含起点、控制点和终点
+    const curve = new THREE.CatmullRomCurve3([startPoint, centerPoint, endPoint]);
+
+    // 获取曲线上的点
+    const curvePoints = curve.getPoints(50); // 获取50个点
+
+    // 将 `THREE.Vector3` 数组转换为平面数组
+    const pointsArray = curvePoints.map((m) => [m.x, m.y, m.z]).flat();
+
+    // 创建 MeshLine 实例
+    const meshLine = new MeshLine();
+    meshLine.setPoints(pointsArray);
+
+    // 创建 MeshLine 的材质，设置线条的粗细
+    const material = new MeshLineMaterial({
+      color: new THREE.Color(0xb4eeea), // 飞线颜色
+      lineWidth: 0.5, // 设置飞线宽度
+      resolution: new THREE.Vector2(width, height), // 渲染器分辨率
+      side: THREE.DoubleSide, // 双面渲染
+      opacity: 0.5, // 设置透明度
+      transparent: true, // 启用透明度
+    });
+
+    // 创建飞线
+    const line = new THREE.Mesh(meshLine.geometry, material);
+    line.name = "飞线";
+
+    // 创建几何体并设置为这些曲线点
+    const geometryPart = new THREE.BufferGeometry().setFromPoints(curvePoints.slice(i, i + 5));
+
+    // 创建线的材质
+    const materialPart = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 10 });
+
+    // 创建飞线
+    const linePart = new THREE.Line(geometryPart, materialPart);
+    linePart.name = "一段飞线";
+    linePart.curvePoints = curvePoints;
+    linePart.progress = Math.random();
+
+    return { line, linePart };
+  }
 }
 
 /**
@@ -343,14 +420,14 @@ function initMapMaterial() {
   textureMap.wrapT = THREE.RepeatWrapping; //纹理垂直方向的平铺方式
   textureMap.flipY = texturefxMap.flipY = false; // 如果设置为true，纹理在上传到GPU的时候会进行纵向的翻转。默认值为true。
   textureMap.rotation = texturefxMap.rotation = THREE.MathUtils.degToRad(45); //rotation纹理将围绕中心点旋转多少度
-  const scale = 0.8;
+  const scale = 1;
   textureMap.repeat.set(scale, scale); // 调整X方向和Y方向的重复次数
   texturefxMap.repeat.set(scale, scale);
-  textureMap.offset.set(0.9, 0.9); //offset贴图单次重复中的起始偏移量
+  textureMap.offset.set(0.6, 0.6); //offset贴图单次重复中的起始偏移量
   texturefxMap.offset.set(0, 0);
 
   // 创建高光材质
-  material = new THREE.MeshLambertMaterial({
+  material = new THREE.MeshPhongMaterial({
     map: textureMap, //颜色贴图
     color: 0xb4eeea,
     emissive: 0x330000, // 设置自发光颜色
@@ -408,8 +485,8 @@ function initGui() {
   const guiParams = {
     topColor: "#b4eeea",
     sideColor: "#ffffff",
-    scale: 0.8,
-    offset: 0.9,
+    scale: 1,
+    offset: 0.6,
     emissive: "#330000",
   };
   gui.addColor(guiParams, "topColor").onChange((val) => {
@@ -528,7 +605,7 @@ function initRotatingPoint(map) {
 // 撒点
 function initPoints() {
   const group = new THREE.Group();
-  const iconTexture = textureLoader.load("./img/point.png");
+  const iconTexture = textureLoader.load("./img/rqbj.png");
   const material = new THREE.SpriteMaterial({
     map: iconTexture,
     sizeAttenuation: true, // 根据距离调整大小
@@ -537,7 +614,7 @@ function initPoints() {
     depthTest: false, // 关闭深度监测
   });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(0.05, 0.05, 1);
+  sprite.scale.set(0.04, 0.05, 1);
   const { center } = getBoundingBox(mapModel);
 
   sprite.position.set(center.x, center.y, 0.06);
@@ -551,24 +628,16 @@ function initPoints() {
 // 批量撒点
 function initBatchPoints() {
   const group = new THREE.Group();
-  const iconTexture = textureLoader.load("./img/point.png");
-  const material = new THREE.SpriteMaterial({
-    map: iconTexture,
-    sizeAttenuation: true, // 根据距离调整大小
-    transparent: true, // 使纹理透明
-    opacity: 1, // 图标的透明度
-    depthTest: true,
-    depthWrite: false,
-  });
+  const iconTexture = textureLoader.load("./img/rqbj.png");
   const geometry = new THREE.BufferGeometry();
   const vertices = [];
   const { center } = getBoundingBox(mapModel); // 根据地图位置设置
-  for (let i = 0; i < 100000; i++) {
+  for (let i = 0; i < 10000; i++) {
     vertices.push(Math.random(), Math.random(), 0.055); // 随机位置
   }
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-  const material1 = new THREE.PointsMaterial({
-    size: 5, // 点的大小
+  const material = new THREE.PointsMaterial({
+    size: 10, // 点的大小
     map: iconTexture, // 使用共享的纹理
     transparent: true,
     sizeAttenuation: true, // 根据距离调整大小
@@ -577,8 +646,7 @@ function initBatchPoints() {
     // alphaTest: 0.01, // 设定透明度阈值
   });
 
-  const points = new THREE.Points(geometry, material1);
-
+  const points = new THREE.Points(geometry, material);
   group.add(points);
   group.position.x -= 0.5;
   group.position.y -= 0.5;
@@ -699,6 +767,20 @@ function createSequenceFrame(options) {
 animate();
 
 function animate() {
+  window.requestAnimationFrame(animate);
+  renderMap();
+  controls.update();
+}
+
+loop();
+function loop() {
+  window.requestAnimationFrame(loop);
+  if (rotatingApertureMesh) {
+    rotatingApertureMesh.rotation.z += 0.0008;
+  }
+  if (rotatingPointMesh) {
+    rotatingPointMesh.rotation.z -= 0.0008;
+  }
   // 圆柱底部 波纹
   if (WaveMeshArr.length) {
     WaveMeshArr.forEach(function (mesh) {
@@ -714,22 +796,6 @@ function animate() {
         mesh._s = 1.0;
       }
     });
-  }
-  window.requestAnimationFrame(animate);
-  renderMap();
-}
-
-loop();
-
-function loop() {
-  window.requestAnimationFrame(() => {
-    loop();
-  });
-  if (rotatingApertureMesh) {
-    rotatingApertureMesh.rotation.z += 0.0008;
-  }
-  if (rotatingPointMesh) {
-    rotatingPointMesh.rotation.z -= 0.0008;
   }
   // 粒子上升
   if (particleArr.length) {
@@ -752,7 +818,37 @@ function loop() {
       }
     }
   }
+  // 飞线动画
+  animateFlyLines();
 }
+
+// 动画循环
+function animateFlyLines() {
+  linePartList.forEach((flyline) => {
+    flyline.progress += 0.01; // 控制飞线移动速度
+    if (flyline.progress > 1) flyline.progress = 0; // 循环动画
+    const points = flyline.curvePoints;
+    const totalPoints = points.length;
+    const segmentLength = 5; // 飞线由多少段组成
+    const startIdx = Math.floor(flyline.progress * (totalPoints - segmentLength));
+
+    // 获取当前飞线的点
+    const segmentPoints = points.slice(startIdx, startIdx + segmentLength);
+
+    // 更新飞线几何体的顶点
+    const positions = flyline.geometry.attributes.position.array;
+    for (let i = 0; i < segmentPoints.length; i++) {
+      const point = segmentPoints[i];
+      positions[i * 3] = point.x;
+      positions[i * 3 + 1] = point.y;
+      positions[i * 3 + 2] = point.z;
+    }
+
+    // 通知 Three.js 顶点数据已更新
+    flyline.geometry.attributes.position.needsUpdate = true;
+  });
+}
+
 const visible = ref(false);
 const tipRef = ref(null);
 
