@@ -28,6 +28,7 @@ const centerPos = [104.25494, 30.883438]; // 地图中心经纬度坐标centerPo
 const WaveMeshArr = []; // 波纹数组
 const particleArr = []; // 飞升粒子集合
 let mapModel = null; // 地图模型
+let earthModel = null; // 地球模型
 const pointInstanceArr = []; // 点击点位监测集合
 const linePartList = []; // 飞线集合
 
@@ -49,9 +50,8 @@ const height = window.innerHeight; //高度
 
 const camera = new THREE.PerspectiveCamera(45, width / height, 1, 10000);
 camera.up.set(0, 0, 1); // 相机以那个轴向上
-camera.position.set(-1.62, -218.38, 232.62);
-
-camera.lookAt([...projection(centerPos), 0]); // 指向mesh对应的位置
+camera.position.set(0, 0, 1000); // 确保相机在地球模型的正前方
+camera.lookAt(0, 0, 0); // 确保相机指向地球中心
 
 // 创建渲染器对象
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -64,7 +64,7 @@ renderer.setSize(width, height); //设置three.js渲染区域的尺寸(像素px)
 
 renderer.setClearColor(0x000000, 1); //设置背景颜色
 
-// 创建CSS2DRenderer渲染器(代替鼠标射线检测)
+// 创建CSS2DRenderer渲染器(替鼠标射线检)
 const labelRenderer = new CSS2DRenderer();
 // 设置labelRenderer渲染器宽高
 labelRenderer.setSize(width, height);
@@ -75,7 +75,7 @@ labelRenderer.domElement.style.top = "0px";
 labelRenderer.domElement.style.pointerEvents = "none";
 
 //环境光:没有特定方向，整体改变场景的光照明暗
-const ambient = new THREE.AmbientLight(0x7af4ff, 3);
+const ambient = new THREE.AmbientLight(0xffffff, 1.5);
 //   平行光1
 let directionalLight1 = new THREE.DirectionalLight(0x7af4ff, 2);
 directionalLight1.position.set(...projection(centerPos), 30);
@@ -86,6 +86,11 @@ directionalLight2.position.set(...projection(centerPos), 30);
 scene.add(ambient);
 scene.add(directionalLight1);
 scene.add(directionalLight2);
+
+// 增加平行光
+let directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(0, 0, 1000).normalize();
+scene.add(directionalLight);
 
 // 设置相机控件轨道控制器OrbitControls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -99,7 +104,7 @@ controls.maxPolarAngle = Math.PI / 2;
 // 如果OrbitControls改变了相机参数，重新调用渲染器渲染三维场景
 controls.addEventListener("change", function () {
   renderMap();
-  // 浏览器控制台查看相机位置变化
+  // 浏览器控制台查机位置变化
   // console.log("camera.position", camera.position);
 }); //监听鼠标、键盘事件
 
@@ -116,21 +121,17 @@ generateGeometry();
 onMounted(() => {
   const container = document.getElementById("webgl");
   container.appendChild(renderer.domElement);
-  renderMap();
-  // 将渲染器添加到页面
   container.appendChild(labelRenderer.domElement);
 
-  // onresize 事件会在窗口被调整大小时发生
+  // 禁用控制器
+  controls.enabled = false;
+
+  // 开始执行入场动画
+  startEntranceAnimation();
+
   window.onresize = function () {
-    // 重置渲染器输出画布canvas尺寸
     renderer.setSize(window.innerWidth, window.innerHeight);
-
-    // 全屏情况下：设置观察范围长宽比aspect为窗口宽高比
     camera.aspect = window.innerWidth / window.innerHeight;
-
-    // 渲染器执行render方法的时候会读取相机对象的投影矩阵属性projectionMatrix
-    // 但是不会每渲染一帧，就通过相机的属性计算投影矩阵(节约计算资源)
-    // 如果相机的一些属性发生了变化，需要执行updateProjectionMatrix ()方法更新相机的投影矩阵
     camera.updateProjectionMatrix();
     renderMap();
   };
@@ -238,7 +239,7 @@ function createFlylines(features, depth) {
   mapModel.add(group);
 
   function createFlyLine(posStart, posEnd, depth, i) {
-    // 根据目标坐标设置3D坐标  z轴位置在地图表面
+    // 根据坐标设置3D坐标  z轴位置在地图表面
     const [x0, y0, z0] = [...posStart, depth];
     const [x1, y1, z1] = [...posEnd, depth];
     // 定义飞线的起点和终点
@@ -259,7 +260,7 @@ function createFlylines(features, depth) {
     const meshLine = new MeshLine();
     meshLine.setPoints(pointsArray);
 
-    // 创建 MeshLine 的材质，设置线条的粗细
+    // 创建 MeshLine 材质，设置线条的粗细
     const material = new MeshLineMaterial({
       color: new THREE.Color(0xb4eeea), // 飞线颜色
       lineWidth: 0.5, // 设置飞线宽度
@@ -299,12 +300,12 @@ function createFlylines(features, depth) {
  */
 function createLightPillar(x, y, height = 1, depth) {
   const group = new THREE.Group();
-  // 柱体的geo,6.19=柱体图片高度/宽度的倍数
+  // 柱体的geo,6.19=柱体片高度/宽度的倍数
   const geometry = new THREE.PlaneGeometry(height / 6.219, height);
 
-  // 柱体旋转90度，垂直于Y轴
+  // 柱体旋转90度垂直于Y轴
   geometry.rotateX(Math.PI / 2);
-  // 柱体的z轴移动高度一半对齐中心点
+  // 柱体z轴动高度一半对齐中心点
   geometry.translate(0, 0, height / 2);
   // 柱子材质
   const material = new THREE.MeshBasicMaterial({
@@ -349,7 +350,7 @@ function createPointMesh(size) {
     color: 0x00ffff,
     side: THREE.DoubleSide,
     transparent: true,
-    depthWrite: false, //禁止写入深度缓冲区数据
+    depthWrite: false, //禁止写深度缓冲区数据
   });
   let mesh = new THREE.Mesh(geometry, material);
   mesh.renderOrder = 2;
@@ -391,8 +392,8 @@ function createLightHalo(size) {
 /**
  * @description 创建文字坐标
  * @param {*} x d3 - 经纬度转换后的x轴坐标
- * @param {*} y d3 - 经纬度转换后的y轴坐标
- * @param {*} areaName 地名
+ * @param {*} y d3 - 经纬度转换后的y坐标
+ * @param {*} areaName 名称
  */
 function createTextPoint(x, y, areaName, depth) {
   let tag = document.createElement("div");
@@ -400,7 +401,7 @@ function createTextPoint(x, y, areaName, depth) {
   tag.style.color = "#fff";
   tag.style.pointerEvents = "auto";
   tag.style.position = "absolute";
-  // tag.addEventListener("mousedown", this.clickLabel, false); // 有时候PC端click事件不生效，不知道什么原因，就使用mousedown事件
+  // tag.addEventListener("mousedown", this.clickLabel, false); // 有时PC端click事不生效，不知道什么原因，就使用mousedown事件
   // tag.addEventListener("touchstart", this.clickLabel, false);
   let label = new CSS2DObject(tag);
   label.element.style.visibility = "visible";
@@ -418,15 +419,15 @@ function initMapMaterial() {
   texturefxMap = textureLoader.load("./img/gz-map-fx.jpg");
   textureMap.wrapS = THREE.RepeatWrapping; //纹理水平方向的平铺方式
   textureMap.wrapT = THREE.RepeatWrapping; //纹理垂直方向的平铺方式
-  textureMap.flipY = texturefxMap.flipY = false; // 如果设置为true，纹理在上传到GPU的时候会进行纵向的翻转。默认值为true。
+  textureMap.flipY = texturefxMap.flipY = false; // 如果设置为true，纹理在上到GPU的时候会进行纵向翻转。默认值为true。
   textureMap.rotation = texturefxMap.rotation = THREE.MathUtils.degToRad(45); //rotation纹理将围绕中心点旋转多少度
   const scale = 1;
   textureMap.repeat.set(scale, scale); // 调整X方向和Y方向的重复次数
   texturefxMap.repeat.set(scale, scale);
-  textureMap.offset.set(0.6, 0.6); //offset贴图单次重复中的起始偏移量
+  textureMap.offset.set(0.6, 0.6); //offset贴图单次重复中的起始移量
   texturefxMap.offset.set(0, 0);
 
-  // 创建高光材质
+  // 创建高材质
   material = new THREE.MeshPhongMaterial({
     map: textureMap, //颜色贴图
     color: 0xb4eeea,
@@ -461,14 +462,14 @@ function createMesh(data, depth) {
     }
     shape.lineTo(x, -y);
   }
-  // 拉伸参数
+  // 伸参数
   const extrudeSettings = {
     depth: depth, // 拉伸度 （3D地图厚度）
-    bevelEnabled: false, // 是否使用倒角
+    bevelEnabled: false, // 是否使用角
     bevelSegments: 1,
     bevelThickness: 0.1,
   };
-  // 将多边形 拉伸扫描成型  //shape二维轮廓  //extrudeSettings拉伸参数
+  // 将多边形 拉伸扫描型  //shape二维轮  //extrudeSettings拉伸参数
   const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
 
   // 多边形添加材质
@@ -514,11 +515,11 @@ function createLine(data, depth) {
   const lineMaterial = new THREE.LineBasicMaterial({
     color: "#ceebf7",
   });
-  // 创建一个空的几何体对象
+  // 建一个空何体对象
   const lineGeometry = new THREE.BufferGeometry();
   const pointsArray = new Array();
 
-  // 循环多边形坐标数组  polygon是地图区块的经纬度坐标数组
+  // 循环边形坐标数组  polygon是地图区块的经纬度坐标数组
   for (let i = 0; i < data.length; i++) {
     const [x, y] = projection(data[i]);
     // 三维向量对象  用于绘制边界线
@@ -633,14 +634,14 @@ function initBatchPoints() {
   const vertices = [];
   const { center } = getBoundingBox(mapModel); // 根据地图位置设置
   for (let i = 0; i < 10000; i++) {
-    vertices.push(Math.random(), Math.random(), 0.055); // 随机位置
+    vertices.push(Math.random(), Math.random(), 0.055); // 随机位
   }
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
   const material = new THREE.PointsMaterial({
     size: 10, // 点的大小
     map: iconTexture, // 使用共享的纹理
     transparent: true,
-    sizeAttenuation: true, // 根据距离调整大小
+    sizeAttenuation: true, // 根据距调整大小
     opacity: 1, // 图标的透明度
     depthTest: false, // 关闭深度监测
     // alphaTest: 0.01, // 设定透明度阈值
@@ -768,8 +769,11 @@ animate();
 
 function animate() {
   window.requestAnimationFrame(animate);
+  // 只有在控制器启用时才更新控制器
+  if (controls.enabled) {
+    controls.update();
+  }
   renderMap();
-  controls.update();
 }
 
 loop();
@@ -825,7 +829,7 @@ function loop() {
 // 动画循环
 function animateFlyLines() {
   linePartList.forEach((flyline) => {
-    flyline.progress += 0.01; // 控制飞线移动速度
+    flyline.progress += 0.01; // 控制飞线移动度
     if (flyline.progress > 1) flyline.progress = 0; // 循环动画
     const points = flyline.curvePoints;
     const totalPoints = points.length;
@@ -863,12 +867,12 @@ function closeTip() {
   visible.value = false;
 }
 
-// 创建 Raycaster 和鼠标向量
+// 建 Raycaster 和鼠标向量
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 // 监听鼠标点击事件
 window.addEventListener("click", (event) => {
-  // 计算鼠标位置的标准化设备坐标（-1 到 1）
+  // 算鼠标位置的标准化设备坐标（-1 到 1）
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -885,6 +889,98 @@ window.addEventListener("click", (event) => {
     setDialog(true, { top: event.pageY, left: event.pageX }, clickedObject.properties.name);
   }
 });
+
+// 添加入场动画函数
+function startEntranceAnimation() {
+  createEarth();
+
+  const duration = 3000; // 动画持续3秒
+  const startTime = Date.now();
+
+  if (mapModel) {
+    mapModel.visible = false; // 确保地图模型在地球展示期间不可见
+  }
+  if (earthModel) {
+    earthModel.visible = true;
+    earthModel.scale.set(1, 1, 1); // 初始缩小比例调整为0.5
+  }
+
+  function animateEntrance() {
+    const currentTime = Date.now();
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const easeProgress = easeInOutCubic(progress);
+
+    if (earthModel) {
+      earthModel.rotation.y += 0.008; // 减慢地球旋转速度
+      earthModel.scale.setScalar(1 + 3 * easeProgress); // 从1放大到3.0
+    }
+
+    earthModel.material.opacity = 1 - easeProgress;
+    if (progress > 0.5) {
+      rotatingApertureMesh.visible = false;
+      rotatingPointMesh.visible = false;
+    }
+
+    if (progress > 0.7) {
+      const mapScaleProgress = (progress - 0.9) / 0.1;
+      earthModel.visible = false; // 在地球淡出时显示地图模型
+      mapModel.visible = true; // 在地球淡出时显示地图模型
+      rotatingApertureMesh.visible = true; // 确保地图模型在地球展示期间不可见
+      rotatingPointMesh.visible = true; // 确保地图模型在地球展示期间不可见
+
+      if (mapModel) {
+        mapModel.traverse((child) => {
+          if (child.isMesh) {
+            child.material.needsUpdate = true; // 确保材质在放大过程中更新
+          }
+        });
+      }
+      // 调整相机位置以模拟场景放大
+      camera.position.z = 400 + 500 * (1 - mapScaleProgress); // 从1000移动到1500
+    }
+
+    renderMap();
+
+    if (progress < 1) {
+      requestAnimationFrame(animateEntrance);
+    } else {
+      if (earthModel) {
+        scene.remove(earthModel);
+        earthModel.geometry.dispose();
+        earthModel.material.dispose();
+        earthModel = null;
+      }
+      // 重置地图模型的旋转角度
+      mapModel.rotation.set(0, 0, 0);
+      controls.enabled = true; // 启用控制器
+    }
+  }
+
+  animateEntrance();
+}
+
+// 添加缓动函数
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// 添加创建地球的函数
+function createEarth() {
+  const geometry = new THREE.SphereGeometry(200, 50, 50);
+
+  const textureLoader = new THREE.TextureLoader();
+  const material = new THREE.MeshBasicMaterial({
+    map: textureLoader.load("./img/land_ocean_ice_cloud_2048.jpg"),
+    bumpScale: 0.5, // 凹凸效果的强
+    transparent: true,
+  });
+
+  earthModel = new THREE.Mesh(geometry, material);
+  earthModel.scale.set(1, 1, 1); // 确保缩放比例在所有轴上是相同的
+  earthModel.position.set(0, 0, 0); // 确保地球在相机视野内
+  scene.add(earthModel);
+}
 </script>
 
 <style>
