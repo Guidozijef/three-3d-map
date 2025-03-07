@@ -185,7 +185,8 @@ function generateGeometry() {
       });
       initPoints();
       // initBatchPoints();
-      createFlylines(features, depth);
+      // createFlylines(features, depth);
+      createFlyLineByShader(features, depth);
       // TODO: 如果要加在地图模型上，必须在缩放之前添加进去
       mapModel.scale.set(200, 200, 200);
       setMapCenter(mapModel);
@@ -218,6 +219,156 @@ function initLightPoint(properties, depth) {
   const label = createTextPoint(x, y, name, depth);
 
   return [light, label];
+}
+
+function createFlyLineByShader(features, depth) {
+  const group = new THREE.Group();
+  const { center } = getBoundingBox(mapModel);
+  features.forEach((feature, i) => {
+    const { properties, geometry } = feature;
+    properties.center = d3.geoCentroid(geometry);
+    const [x, y] = projection(properties.center);
+    const { line, flyLine } = createFlyLine([center.x, center.y], [x, -y], depth, i);
+    flyLine.renderOrder = 80;
+    line.add(flyLine);
+    group.add(line);
+    linePartList.push(flyLine);
+  });
+  mapModel.add(group);
+
+  function createFlyLine(posStart, posEnd, depth) {
+    // 曲线控制点设置
+    const [x0, y0, z0] = [...posStart, depth];
+    const [x1, y1, z1] = [...posEnd, depth];
+
+    // 调整控制点高度，形成更明显的弧线
+    const controlHeight = 0.05;
+    // 定义飞线的起点和终点
+    const startPoint = new THREE.Vector3(x0, y0, z0);
+    const endPoint = new THREE.Vector3(x1, y1, z1);
+    const centerPoint = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, z1 + controlHeight);
+
+    // 创建 CatmullRomCurve3 曲线，包含起点、控制点和终点
+    const curve = new THREE.CatmullRomCurve3([startPoint, centerPoint, endPoint]);
+
+    // 获取曲线上的点
+    const curvePoints = curve.getPoints(50); // 获取50个点
+
+    // 将 `THREE.Vector3` 数组转换为平面数组
+    const pointsArray = curvePoints.map((m) => [m.x, m.y, m.z]).flat();
+
+    // 创建 MeshLine 实例
+    const meshLine = new MeshLine();
+    meshLine.setPoints(pointsArray);
+
+    // 创建 MeshLine 材质，设置线条的粗细
+    const material = new MeshLineMaterial({
+      color: new THREE.Color(0xb4eeea), // 飞线颜色
+      lineWidth: 0.1, // 设置飞线宽度
+      resolution: new THREE.Vector2(width, height), // 渲染器分辨率
+      side: THREE.DoubleSide, // 双面渲染
+      opacity: 0.5, // 设置透明度
+      transparent: true, // 启用透明度
+    });
+
+    // 创建飞线
+    const line = new THREE.Mesh(meshLine.geometry, material);
+    line.name = "飞线"; // 设置名称，方便后续操作
+
+    // 获取曲线上的点
+    const points = curve.getSpacedPoints(500);
+    const positions = [];
+    const indices = [];
+
+    // 准备几何体数据
+    points.forEach((p, i) => {
+      positions.push(p.x, p.y, p.z);
+      indices.push(i / 500); // 标准化索引值到[0,1]范围
+    });
+
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("aIndex", new THREE.Float32BufferAttribute(indices, 1));
+
+    // 着色器材质
+    const vertexShader = `
+    uniform float uTime;
+    uniform float uSpeed;
+    uniform float uWidth;
+    uniform float uTailLength;
+    
+    attribute float aIndex;
+    varying float vOpacity;
+    
+    void main() {
+      float progress = mod(uTime * uSpeed, 1.0);
+      float distance = progress - aIndex;
+      
+      // 处理循环
+      if(distance < 0.0) distance += 1.0;
+      
+      if(distance < uTailLength) {
+        float size = uWidth * (1.0 - distance / uTailLength);
+        gl_PointSize = size;
+        vOpacity = 1.0 - pow(distance / uTailLength, 2.0);
+      } else {
+        gl_PointSize = 0.0;
+        vOpacity = 0.0;
+      }
+      
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+    const fragmentShader = `
+    varying float vOpacity;
+    uniform vec3 uColor;
+    
+    void main() {
+      vec2 coord = gl_PointCoord - vec2(0.5);
+      float dist = length(coord);
+      
+      // 创建圆形点
+      if(dist > 0.5) discard;
+      
+      // 添加光晕效果
+      float intensity = pow(1.0 - dist * 2.0, 4.0);
+      gl_FragColor = vec4(uColor, vOpacity * intensity);
+    }
+  `;
+
+    // 材质参数
+    const uniforms = {
+      uTime: { value: 0 },
+      uSpeed: { value: 1.5 },
+      uWidth: { value: 15.0 },
+      uTailLength: { value: 0.2 },
+      uColor: { value: new THREE.Color(0x4effd6) },
+    };
+
+    // 创建点云对象
+    const pointsMaterial = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const flyLine = new THREE.Points(geometry, pointsMaterial);
+
+    // 动画循环
+    function animate() {
+      uniforms.uTime.value += 0.008;
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    return { line, flyLine };
+  }
 }
 
 /**
@@ -823,7 +974,7 @@ function loop() {
     }
   }
   // 飞线动画
-  animateFlyLines();
+  // animateFlyLines();
 }
 
 // 动画循环
